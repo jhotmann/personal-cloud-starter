@@ -263,5 +263,6 @@ volumes:
   postgres_data: {}
   redis_data: {}
   nextcloud_apps: {}
+  nextcloud_data: {}
   bitwarden_data: {}
   duplicati_config: {}
