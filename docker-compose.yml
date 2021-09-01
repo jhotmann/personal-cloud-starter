@@ -259,6 +259,7 @@ networks:
 volumes:
   caddy_data: {}
   mariadb_data: {}
+  mysql-backup_data: {}
   postgres_data: {}
   redis_data: {}
   nextcloud_apps: {}
