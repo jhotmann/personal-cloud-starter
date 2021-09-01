@@ -1,0 +1,5 @@
+# DO NOT STORE .env IN SOURCE CONTROL!!!!
+.env
+
+# Add any files/folders you don't want in source control
+apps/ddns-updater/updates.json

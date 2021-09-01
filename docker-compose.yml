@@ -1,0 +1,266 @@
+version: "3.8"
+
+services:
+  # Caddy Reverse Proxy
+  caddy:
+    container_name: caddy
+    image: lucaslorentz/caddy-docker-proxy:2.3
+    ports:
+      - 80:80
+      - 443:443
+    networks:
+      - caddy
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - caddy_data:/data
+    deploy:
+      placement:
+        constraints:
+          - node.role == manager
+      replicas: 1
+      restart_policy:
+        condition: any
+    labels:
+      caddy.email: ${CERTIFICATE_EMAIL_ADDRESS}
+
+  # Dynamic DNS Updater
+  ddns-updater:
+    container_name: ddns-updater
+    image: qmcgaw/ddns-updater:latest
+    networks:
+      - internal
+    ports:
+      - 8000:8000/tcp
+    dns:
+      # Use an external DNS providers in case you are using your own local DNS
+      # to point the the local IP of the reverse proxy for your subdomains
+      - '1.1.1.1'
+      - '1.0.0.1'
+      - '9.9.9.9'
+    volumes:
+      - ./apps/ddns-updater:/updater/data
+    environment:
+      - TZ=${TZ}
+      - PERIOD=5m
+      - UPDATE_COOLDOWN_PERIOD=5m
+      - PUBLICIP_FETCHERS=all
+      - PUBLICIP_HTTP_PROVIDERS=all
+      - PUBLICIPV4_HTTP_PROVIDERS=all
+      - PUBLICIPV6_HTTP_PROVIDERS=all
+      - PUBLICIP_DNS_PROVIDERS=all
+      - PUBLICIP_DNS_TIMEOUT=3s
+      - HTTP_TIMEOUT=10s
+
+      # Web UI
+      - LISTENING_PORT=8000
+      - ROOT_URL=/
+
+      # Backup
+      - BACKUP_PERIOD=0 # 0 to disable
+      - BACKUP_DIRECTORY=/updater/data
+
+      # Other
+      - LOG_LEVEL=info
+      - LOG_CALLER=hidden
+    restart: always
+
+  # MariaDB
+  mariadb:
+    container_name: mariadb
+    image: mariadb:10
+    command: --transaction-isolation=READ-COMMITTED --binlog-format=ROW --innodb-read-only-compressed=OFF
+    volumes:
+      - ./apps/mariadb:/docker-entrypoint-initdb.d
+      - mariadb_data:/var/lib/mysql
+    environment:
+      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD}
+      # Pass other database passwords from .env
+      - NEXTCLOUD_DB_PASSWORD=${NEXTCLOUD_DB_PASSWORD}
+      - BITWARDEN_DB_PASSWORD=${BITWARDEN_DB_PASSWORD}
+    networks:
+      - internal
+    restart: always
+
+  # MariaDB Backups
+  mysql-backup:
+    container_name: mysql-backup
+    image: fradelg/mysql-cron-backup:latest
+    networks:
+      - internal
+    depends_on:
+      - mariadb
+    volumes:
+      - mysql-backup_data:/backup
+    environment:
+      - MYSQL_HOST=mariadb
+      - MYSQL_USER=root
+      - MYSQL_PASS=${MYSQL_ROOT_PASSWORD}
+      - MAX_BACKUPS=7 # Keep a week of backups
+      - INIT_BACKUP=0
+      - CRON_TIME=0 3 * * * # Backup at 3am every day
+      - GZIP_LEVEL=9
+      - TZ=${TZ}
+    restart: unless-stopped
+
+  # PostgreSQL
+  postgres:
+    container_name: postgres
+    image: postgres:13
+    environment:
+      - POSTGRES_PASSWORD=${POSTGRES_ROOT_PASSWORD}
+      # Pass other database passwords from .env
+      - MINIFLUX_DB_PASSWORD=${MINIFLUX_DB_PASSWORD}
+    volumes:
+      - ./apps/postgres/init.sh:/docker-entrypoint-initdb.d/init-user-db.sh
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - internal
+    restart: always
+
+  # Redis
+  redis:
+    container_name: redis
+    image: redis:latest
+    networks:
+      - internal
+    volumes:
+      - redis_data:/var/lib/redis
+    restart: always
+
+  # Nextcloud
+  nextcloud:
+    container_name: nextcloud
+    image: nextcloud:latest
+    restart: always
+    networks:
+      - caddy
+      - internal
+    ports:
+      - 8001:80
+    depends_on:
+      - mariadb
+      - redis
+    volumes:
+      - nextcloud_data:/var/www/html/data
+      - ./apps/nextcloud/config:/var/www/html/config
+      - nextcloud_apps:/var/www/html/apps
+    environment:
+      - MYSQL_PASSWORD=${NEXTCLOUD_DB_PASSWORD}
+      - MYSQL_DATABASE=nextcloud
+      - MYSQL_USER=nextcloud
+      - MYSQL_HOST=mariadb
+      - REDIS_HOST=redis
+      - TRUSTED_PROXIES=172.18.1.0/24
+      - APACHE_DISABLE_REWRITE_IP=1
+    labels:
+      caddy: nextcloud.${DOMAIN_NAME}
+      caddy.reverse_proxy: "{{upstreams 80}}"
+      caddy.0_redir: "/.well-known/carddav /remote.php/dav 301"
+      caddy.1_redir: "/.well-known/caldav /remote.php/dav 301"
+      caddy.header: "Strict-Transport-Security max-age=15552000"
+
+  # Vaultwarden password manager
+  bitwarden:
+    container_name: bitwarden
+    image: vaultwarden/server:latest
+    restart: always
+    ports:
+      - 3012:3012/tcp
+      - 8002:80/tcp
+    networks:
+      - caddy
+      - internal
+    volumes:
+      - bitwarden_data:/data
+    environment:
+      - WEBSOCKET_ENABLED=true
+      - SIGNUPS_ALLOWED=false
+      - DOMAIN=https://bitwarden.${DOMAIN_NAME}
+      - ADMIN_TOKEN=${BITWARDEN_ADMIN_PASSWORD}
+      - SMTP_HOST=${SMTP_HOST}
+      - SMTP_FROM=${SMTP_USERNAME}
+      - SMTP_PORT=587
+      - SMTP_SSL=true
+      - SMTP_USERNAME=${SMTP_USERNAME}
+      - SMTP_PASSWORD=${SMTP_PASSWORD}
+      - DATABASE_URL=mysql://bitwarden:${BITWARDEN_DB_PASSWORD}@mariadb:3306/bitwarden
+    depends_on:
+      - mariadb
+    labels:
+      caddy: bitwarden.${DOMAIN_NAME}
+      caddy.0_reverse_proxy: "{{upstreams 80}}"
+      caddy.1_reverse_proxy: "/notifications/hub/negotiate {{upstreams 80}}"
+      caddy.2_reverse_proxy: "/notifications/hub {{upstreams 3012}}"
+
+  # Miniflux RSS Reader
+  miniflux:
+    container_name: miniflux
+    image: miniflux/miniflux:latest
+    restart: always
+    ports:
+      - 8003:8080
+    networks:
+      - caddy
+      - internal
+    depends_on:
+      - postgres
+    environment:
+      - DATABASE_URL=postgres://miniflux:${MINIFLUX_DB_PASSWORD}@postgres/miniflux?sslmode=disable
+      - POLLING_FREQUENCY=10
+      - POLLING_PARSING_ERROR_LIMIT=0
+      - BATCH_SIZE=100
+      - WORKER_POOL_SIZE=10
+      - BASE_URL=https://rss.${DOMAIN_NAME}
+      - RUN_MIGRATIONS=1
+      - CREATE_ADMIN=1
+      - ADMIN_USERNAME=admin
+      - ADMIN_PASSWORD=${MINIFLUX_ADMIN_PASSWORD}
+    labels:
+      caddy: rss.${DOMAIN_NAME}
+      caddy.reverse_proxy: "{{upstreams 8080}}"
+
+  # Duplicati Off-site Backups
+  duplicati:
+    container_name: duplicati
+    image: ghcr.io/linuxserver/duplicati:latest
+    ports:
+      - 8004:8200
+    networks:
+      - internal
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=${TZ}
+    volumes:
+      - duplicati_config:/config
+      - ${BACKUP_PATH}:/source
+    restart: always
+
+networks:
+  # caddy network allows the caddy to see any containers you want to
+  # expose to the internet
+  caddy:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.18.1.0/24
+          gateway: 172.18.1.1
+      driver: default
+  # internal network allows containers to see the database servers
+  internal:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.18.2.0/24
+          gateway: 172.18.2.1
+      driver: default
+
+# list data volumes here
+volumes:
+  caddy_data: {}
+  mariadb_data: {}
+  postgres_data: {}
+  redis_data: {}
+  nextcloud_apps: {}
+  bitwarden_data: {}
+  duplicati_config: {}

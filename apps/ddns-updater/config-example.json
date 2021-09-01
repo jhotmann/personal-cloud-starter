@@ -1,0 +1,18 @@
+{
+  "settings": [
+    {
+      "provider": "duckdns",
+      "host": "bitwarden",
+      "token": "yourtoken",
+      "ip_version": "ipv4",
+      "provider_ip": true
+    },
+    {
+      "provider": "freedns",
+      "domain": "example.com",
+      "host": "nextcloud",
+      "token": "yourtoken",
+      "ip_version": "ipv4"
+    }
+  ]
+}
