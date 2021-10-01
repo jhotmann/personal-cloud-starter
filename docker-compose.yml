@@ -5,6 +5,7 @@ services:
   caddy:
     container_name: caddy
     image: lucaslorentz/caddy-docker-proxy:2.3
+    restart: always
     ports:
       - 80:80
       - 443:443
@@ -13,13 +14,13 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - caddy_data:/data
+    depends_on:
+      - ddns-updater
     deploy:
       placement:
         constraints:
           - node.role == manager
       replicas: 1
-      restart_policy:
-        condition: any
     labels:
       caddy.email: ${CERTIFICATE_EMAIL_ADDRESS}
 
@@ -106,10 +107,8 @@ services:
   postgres:
     container_name: postgres
     image: postgres:13
-    environment:
-      - POSTGRES_PASSWORD=${POSTGRES_ROOT_PASSWORD}
-      # Pass other database passwords from .env
-      - MINIFLUX_DB_PASSWORD=${MINIFLUX_DB_PASSWORD}
+    env_file:
+      - .env
     volumes:
       - ./apps/postgres/init.sh:/docker-entrypoint-initdb.d/init-user-db.sh
       - postgres_data:/var/lib/postgresql/data
