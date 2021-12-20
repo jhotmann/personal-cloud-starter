@@ -8,7 +8,7 @@ Many of the internet services we rely on every day exist solely to use your data
 1. [Bitwarden](https://bitwarden.com/) (via the [Valutwarden](https://github.com/dani-garcia/vaultwarden) fork) is a fantastic, open source password manager with features like organizations to share passwords with others, secure file and secret sharing, and tools to help you mitigate damage from data breaches. Get all the paid features by hosting yourself.
 1. [Miniflux](https://miniflux.app/) is a minimal RSS reader and aggregator. Get your news straight from the websites you trust without relying on an algorithmic news feed to show you what it thinks you want to see.
 
-## Backgroup Applications
+## Background Applications
 1. [MariaDB](https://mariadb.org/) is an open source SQL database supported by many applications
 1. [PostgreSQL](https://www.postgresql.org/) is another great open source SQL database. Most applications should support Maria, Postgres, or both.
 1. [Caddy](https://caddyserver.com/v2) via [Caddy-Docker-Proxy](https://github.com/lucaslorentz/caddy-docker-proxy) is a web server and [reverse proxy]() that we will use to point requests from mysubdomain.example.com to the correct container and port. Caddy automatically gets and renews TLS certificates so you can use HTTPS.
